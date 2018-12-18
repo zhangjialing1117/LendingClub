@@ -16,14 +16,15 @@ Data Exploratory:
 3) # of loan issued by years
 4) total loan amount issued by states
 5) relationship between FICO and LC scores (grades, subgrade)
-LC relies on the foundation of FICO's scores to assess the credit worthiness of potential borrowers.
-find linear relationship between FICO scores and LC's grade system
-Findings: 
-a). Grades D,E,F,G even C have very close distributions and medians
-b). LC earlier model used to rely on FICO score heavily and over the course of the years, 
+   LC relies on the foundation of FICO's scores to assess the credit worthiness of potential borrowers.
+   find linear relationship between FICO scores and LC's grade system
+   Findings: 
+   a). Grades D,E,F,G even C have very close distributions and medians
+   b). LC earlier model used to rely on FICO score heavily and over the course of the years, 
     LC refined their credit models using the data that they started accumulating.
 
 Exploration & Discovery of the predictive strength of each feature:
+which bariables are good predictors, 
 1) debt VS rates
 2) homeowership VS LC grades, charge off rates
 3) loan purpose (education, small business) VS LC grades, charge off rates
