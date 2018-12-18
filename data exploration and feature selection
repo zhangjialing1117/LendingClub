@@ -1,0 +1,57 @@
+Lending Club: introduction and how it works 
+1) risk assesment on borrowers, determine a credit rating and assign appropriate interest rates
+2) investors earn monthly returns
+
+Data: quarterly, # of feature, information on the loans issued by LC
+Features: annual_inc, int_rate, grade, subgrade, home_ownership, total_acc, loan_status, etc.
+
+Goal of the project:
+1) predict loan status
+2) predict int_rate
+See the bottom part
+
+Data Exploratory:
+1) loan issued grouped by FICO scores (?)
+2) loan issued grouped by grades
+3) # of loan issued by years
+4) total loan amount issued by states
+5) relationship between FICO and LC scores (grades, subgrade)
+LC relies on the foundation of FICO's scores to assess the credit worthiness of potential borrowers.
+find linear relationship between FICO scores and LC's grade system
+Findings: 
+a). Grades D,E,F,G even C have very close distributions and medians
+b). LC earlier model used to rely on FICO score heavily and over the course of the years, 
+    LC refined their credit models using the data that they started accumulating.
+
+Exploration & Discovery of the predictive strength of each feature:
+1) debt VS rates
+2) homeowership VS LC grades, charge off rates
+3) loan purpose (education, small business) VS LC grades, charge off rates
+4) rates VS revolving balance and employment length
+5) # of delinquencies over the past 2 years VS rates
+6) # of opened and total number of accounts
+7) DTI (Debt to Income ratio), the lower the better, 
+   some impact on charge off probabilities, DTI VS LC grades
+8) Public records VS charge off rates
+9) Age of Credit history VS rates
+10) Annual Income VS rates
+11) Revolving utilization: higher revolving utilization means higher risk of default rates
+12) Inquiries in the last 6 months VS rates
+13) Geography relate to rates
+
+Preliminary Conclusion:
+LC's data is a great source of information on personal credit.
+Need more in depth analyses:
+1) geographical selection bias
+2) careful with the implications of certain features when trying to extract correlation
+3) the safe way to do fnancial services is to keep the segmentation down to a minimum 
+   and let the mathematics of risk pooling look after us
+4) be carefull with adverse selection
+
+GOALs:
+1) Build a credit model and predict reliably default rates
+2) Predict grade
+
+Credits to: JFdarre, http://rpubs.com/jfdarre/119147, https://github.com/zhangjialing1117/Project1/blob/master/Project1_new.Rmd
+
+
