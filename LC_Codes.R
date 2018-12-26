@@ -1067,3 +1067,244 @@ library(glmnet)
 # glmnet only takes matrix, can use is.data.frame() or is.matrix() to test
 # glmnet standardizes every feature, even categorical feature
 # http://stackoverflow.com/questions/17887747/how-does-glmnets-standardize-argument-handle-dummy-variables
+#######################################################################################################################
+#######################################################################################################################
+train.sub <- train[, c('int_rate', 'state_mean_int', 'home_ownership', 'annual_inc_log', 'dti',
+                       'term', 'loan_amnt', 'total_acc', 'tot_cur_bal', 'open_acc','inq_last_6mths',
+                       'purpose', 'total_rev_hi_lim', 'pub_rec', 'acc_now_delinq',
+                       'emp_length', 'grade','sub_grade')]
+
+ind = train.sub[, -1] # x: feature, indepent
+ind <- model.matrix( ~., ind) #"~.": all columns
+# model.matrix 好处:categorical feature -> boolean feature, data frame-> matrix
+dep <- train.sub[, 1] # y: respone
+
+# fit linear regression + regularization
+#  LASSO
+fit1 <- glmnet(x=ind, y=dep,alpha=1) # default is alpha = 1, lasso
+plot(fit1, label = T) # label=T  tell which features
+colnames(ind)
+# plot(fit1)
+# x-axis: l1-norm (sum of absolute of all coefficient, except non interception coefficient)
+# top x-axis: num of non-zero estimators(beta)
+# 最后被push成0的feature会比较重要，随lamda变大 -> feature "grade" is really important
+
+# or plot like this
+plot(fit1, xvar='lambda',label=T)
+#看每一个feature的含义
+vnam=coef(fit1)
+# 2 intercept "." is zero,
+#每一列代表lambda变化(从左往右),lambda变小
+vnam=vnam[-c(1,2),ncol(vnam)]
+#见下面例子
+#plot(fit1,label = T,xvar='lambda',yaxt='n',xlab='',)
+summary(fit1)
+#######################################################################################################################
+train.sub <- train[, c('int_rate', 'state_mean_int', 'home_ownership', 'annual_inc_log', 'dti',
+                       'term', 'loan_amnt', 'total_acc', 'tot_cur_bal', 'open_acc','inq_last_6mths',
+                       'purpose', 'total_rev_hi_lim', 'pub_rec', 'acc_now_delinq',
+                       'emp_length', 'grade','sub_grade')]
+train.sub.scale <- train.sub
+colnames(train.sub.scale)
+train.sub.scale[, c(4,5,7,8,9,10,11,13,14,15)] <- scale(train.sub.scale[, c(4,5,7,8,9,10,11,13,14,15)])
+
+ind = train.sub.scale[, -1]
+ind <- model.matrix( ~., ind)
+dep <- train.sub.scale[, 1]
+fit <- glmnet(x=ind, y=dep) # default is alpha = 1, lasso
+plot(fit, label = T)
+par(mfrow = c(1, 2))
+# Understand the plot
+# The top row indicates the number of nonzero coefficients at the current λ,
+# which is the effective degrees of freedom (df) for the lasso.
+# y axis is the value of coefficient
+# x axis is the sum of absolute value of coefficients (L1 norm), or log(lambda)
+plot(fit, label = T)
+plot(fit, xvar = "lambda", label = T)
+
+vnat=coef(fit) # why do we see two intercepts, one is from model.matrix, one is default added in glmnet
+vnat <- vnat[-c(1,2), ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+# default is par(mar=c(5.1,4.1,4.1,2.1), bottom, lef, top, right
+par(mar = c(5.1,6,4.1,2.1))
+par(mfrow = c(1, 1))
+plot(fit, xvar = 'lambda', label = T, yaxt='n', ylab = "")
+#axis(2, at=vnat,line=-.5,label = colnames(ind)[-1],las = 2, cex.axis=0.5)
+print(fit)
+# Df is the non zero beta, 
+#######################################################################################################################
+
+# saturated model is a model with a parameter for every observation so that the data are fitted exactly.
+# Deviance_model = 2*(loglikelihood_saturate_model - loglikelihood_current_model)
+# Deviance_null = 2*(loglikelihood_saturate_model - loglikelihood_intercept_only_model)
+# Deviance percentage = 1 -  Deviance_model / Deviance_null
+# Deviance as R^2
+# lambda value
+
+#Deviance_model
+
+coef(fit, s = 1/exp(2)) # s stands for lambda
+coef(fit, s = 1/exp(8))
+#######################################################################################################################
+# How to choose lambda, CROSS-VALIDATION-> cv.glmnet, k-fold validation
+# We can choose lambda by checking the picture, Still kinda subjective
+# use cross validation to get optimal value of lambda, 
+cvfit <- cv.glmnet(ind, dep)
+plot(cvfit)
+
+## important
+# Two selected lambdas are shown, 
+cvfit$lambda.min # value of lambda gives minimal mean cross validated error
+cvfit$lambda.1se # most regularized model such that error is within one std err of the minimum
+x = coef(cvfit, s = "lambda.min")
+coef(cvfit, s = "lambda.1se")
+
+#######################################################################################################################
+#######################################################################################################################
+# LOGISTIC REGRESSION, CATEGORICAL RESPONSE (Y)
+# Goal: Predict Loan Status
+#######################################################################################################################
+#######################################################################################################################
+sort(table(loan1$loan_status))
+loan1$loan_status <- gsub('Does not meet the credit policy. Status:',
+                         '', loan1$loan_status)
+sort(table(loan1$loan_status))
+
+# status in between, hard to predict, thus NOT CONSIDERTION THESE LOAN
+# USE SUBSET for future prediction
+loan1 <- subset(loan1, !loan_status %in% c('Current', 'Issued')) 
+loan1$loan_status_binary <- with(loan1, ifelse(loan_status == 'Fully Paid', 1, 0))
+
+loan1$log_annual_inc <- log(loan1$annual_inc + 1)
+
+loan1$state_mean_int <-
+  ifelse(loan1$addr_state %in% names(int_state)[which(int_state <=quantile(int_state, 0.25))], 'low',
+         ifelse(loan1$addr_state %in% names(int_state)[which(int_state <=quantile(int_state, 0.5))],'lowmedium',
+                ifelse(loan1$addr_state %in% names(int_state)[which(int_state <= quantile(int_state, 0.75))], 
+                       'mediumhigh', 'high')))
+#split data
+train.ind <- sample(1:dim(loan1)[1], 0.7 * dim(loan1)[1])
+
+# update features and response
+train.sub <- loan1[train.ind, c('loan_status_binary', 'state_mean_int', 'home_ownership', 'log_annual_inc', 'dti',
+                               'term', 'loan_amnt', 'total_acc', 'tot_cur_bal', 'open_acc')]
+
+# use "relevel" for categorical feature, to set base/level, 
+# think: 没出现的就是dummy variable里面-1的这个as base
+# relevel to take factor数据
+train.sub$state_mean_int <- relevel(as.factor(train.sub$state_mean_int), ref = 'low')
+
+# fit Logistic Regression, generate linear regression(glm)
+logis.mod <- glm(loan_status_binary ~ ., train.sub, family = 'binomial') # binary classification
+summary(logis.mod) # didn't include good performance evaluation
+
+test <-  loan1[-train.ind, c('loan_status_binary', 'state_mean_int', 'home_ownership', 'log_annual_inc', 'dti',
+                            'term', 'loan_amnt', 'total_acc', 'tot_cur_bal', 'open_acc')]
+
+#######################################################################################################################
+library(pROC)
+pred <- predict(logis.mod, test)
+head(pred)
+plot.roc(test$loan_status_binary, pred, print.auc=TRUE)
+# how to know area under roc curve, AUC
+# THUS, in order to improve the AUC, we need to add more features in the model!!!
+
+
+# find the best lambda
+train.sub.scale <- train.sub
+train.sub.scale[, c(4,5,7,8,9,10)] <- scale(train.sub.scale[, c(4,5,7,8,9,10)])
+ind = train.sub.scale[, -1]
+ind <- model.matrix( ~., ind)
+dep <- train.sub.scale[, 1]
+logis.cvfit <- cv.glmnet(ind, dep, family = 'binomial')
+plot(logis.cvfit)
+
+#######################################################################################################################
+## 推展 面试题
+# 1. write a function to realize gradient descent in R 
+# (https://www.r-bloggers.com/implementing-the-gradient-descent-algorithm-in-r/)
+# https://www.ocf.berkeley.edu/~janastas/stochastic-gradient-descent-in-r.html
+
+# 2. write cross validation in R
+# https://www.analyticsvidhya.com/blog/2018/05/improve-model-performance-cross-validation-in-python-r/
+# http://www.milanor.net/blog/cross-validation-for-predictive-analytics-using-r/
+
+#把theory转换成code 
+#######################################################################################################################
+
+# Hypothesis Testing
+# understand t.test
+# t.test(x, y = NULL, alternative = c("two.sided", "less", "greater"), 
+# mu = 0, paired = FALSE, var.equal = FALSE, conf.level = 0.95, ...)
+# Welch t-test (var.equal = FALSE) and student t-test(var.equal = TRUE)
+t.test(int_rate ~ term, data = loan) 
+#H0: u1(population mean) using sample(WHEN term=36's int_rate) == u2 (population mean) using sample(WHEN term=60's int_rate)
+
+# How to calculate the stats by hand
+short_term <- subset(loan, term == ' 36 months')
+long_term <- subset(loan, term == ' 60 months')
+stderr <- sqrt(var(short_term$int_rate) / dim(short_term)[1] +
+                 var(long_term$int_rate) / dim(long_term)[1])
+t.score <- (mean(short_term$int_rate) - mean(long_term$int_rate)) / stderr
+# df follows complicated formula in slide (could be approximately in t.test).
+p.val <- 2 * pt(t.score, df = 467040)
+
+# understand chi-square test
+# Check if grade has same distribution in short term and long term loans,
+# what's null hypo and alternative hypo here?
+round(with(loan, table(term, grade)) / as.numeric(table(loan$term)), 2)
+with(loan, chisq.test(grade, term))
+#with(loan, table(term, grade))==table(loan$term,loan$grade)###
+# p value
+1 - pchisq(176070, df=6)
+
+# if in chisq.test there is warning due to 0 cell, causing some expected values is < 5
+# try fisher.test() 
+
+# calculate the chi square stats
+# see if term and grade have the same distribution? Or compare 2 population variance?
+# expected value should be: 
+apply(with(loan, table(term, grade)), 1, sum) # row sum
+# 36 months  60 months 
+#  621125     266254
+apply(with(loan, table(term, grade)), 2, sum) # col sum
+# A      B      C      D       E      F       G 
+# 148202 254535 245860 139542  70705  23046   5489
+observed <- with(loan, table(term, grade))
+# expected value in cells should be:
+num.grade <- apply(observed, 2, sum)
+perc.term <- apply(observed, 1, sum)/dim(loan)[1]
+expected <- rbind(num.grade * perc.term[1], num.grade * perc.term[2])
+rownames(expected) <- c('short term', 'long term')
+sum((observed - expected)^2/expected)
+
+# sigma estimator, there are 13 features in total, not including beta0, 
+# res = actual - fitted
+head(mod2$res)
+# MSE:
+sqrt(sum(mod2$res^2)/(dim(train.sub)[1] - 14)) # dim(train.sub)[1] - 14 = 621151 degree of freedom
+
+# R square: 1 - sum_square_residual / sum_square_total
+1 - sum(mod2$res^2)/sum((train.sub$int_rate - mean(train.sub$int_rate))^2)
+# adjusted R square
+1 - (sum(mod2$res^2)/sum((train.sub$int_rate - mean(train.sub$int_rate))^2)) * 
+  (dim(train.sub)[1] - 1) /(dim(train.sub)[1] - 13 - 1)
+# small p, R square adjusted is very similar to R square.
+
+# F test score, go to slides.
+y <- train.sub$int_rate
+sst = sum((y - mean(y))^2) # sum of square total, df = n - 1 = 621164
+ssr = sum(mod2$res^2) #  sum of square residual, df = n-1-p = n - 14= 621151
+ssm = sum((y - mean(y))^2) - sum(mod2$res^2) # sum of square model, df = 13
+Fstats = (ssm)/(13) / (ssr / (dim(train.sub)[1] - 13 -1))
+1 - pf(Fstats, 13, (dim(train.sub)[1] - 13 - 1)) # def = p and n-1-p
+
+# residual = observed - fitted
+head(sort(mod2$res))
+mod2$res[which.min(mod2$res)]
+mod2$res[which.max(mod2$res)]
+plot(mod2$fit, mod2$res, xlab = 'Fitted', ylab = 'residual')
+
+
+# org.data <- read.csv("LCFromWebsite_2007_2011.csv", stringsAsFactors = FALSE) #
+# org.data <- read.table("LCFromWebsite_2007_2011.csv", stringsAsFactors = FALSE, 
+#                       fill = TRUE, sep = ",", skip = 1, header = T)
