@@ -53,6 +53,13 @@ GOALs:
 1) Build a credit model and predict reliably default rates
 2) Predict grade
 
-Credit to: JFdarre, http://rpubs.com/jfdarre/119147, https://github.com/zhangjialing1117/Project1/blob/master/Project1_new.Rmd
+References:
+1. JFdarre, http://rpubs.com/jfdarre/119147, https://github.com/zhangjialing1117/Project1/blob/master/Project1_new.Rmd
+2. https://rstudio-pubs-static.s3.amazonaws.com/203258_d20c1a34bc094151a0a1e4f4180c5f6f.html
+3. https://rstudio-pubs-static.s3.amazonaws.com/190551_15f6124632824534b7e397ce7ad2f2b8.html
+4. https://towardsdatascience.com/predicting-loan-repayment-5df4e0023e92
+5. python: https://www.kaggle.com/husainsb/lendingclub-analysis-and-predictions
+6. python: https://www.kaggle.com/jkjay333/analyze-lending-loan-club
+7. https://medium.com/@jiaminhan/peer-to-peer-loan-default-prediction-using-lending-club-data-3f75886cb1e
 
 
