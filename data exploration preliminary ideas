@@ -1,16 +1,28 @@
-Lending Club: introduction and how it works 
+Lending Club: introduction and how it works
+peer to peer loans through online lending platform
 1) risk assesment on borrowers, determine a credit rating and assign appropriate interest rates
 2) investors earn monthly returns
-
-Data: quarterly, # of feature, information on the loans issued by LC
-Features: annual_inc, int_rate, grade, subgrade, home_ownership, total_acc, loan_status, etc.
+LC provides an excellent machine learning case study
 
 Goal of the project:
-1) predict loan status
-2) predict int_rate
+Can we determine an accurate way of using loan characteristics to predict which loans will be 
+paid back in full and which will default?
+1) predict loan_status: 
+2) predict int_rate (by selecting relevant features)
 See the bottom part
 
-Data Exploratory:
+Data Preparation:
+https://www.lendingclub.com/info/download-data.action
+information on the loans issued by LC, feautres of the loan, features of the borrower
+2007-2011, 2012-2013, 2014, 2015, ...quarterly + Data Dictionary
+Features: annual_inc, int_rate, grade, subgrade, home_ownership, total_acc, loan_status, etc.
+
+Based on our goal, define the label:
+loan$loan_status:
+"Charged Off", "Current", "Default", "Fully paid", "In Grace Period", "Late"
+To consolidate 
+
+Feature Engineering & Data Exploratory:
 1) loan issued grouped by FICO scores (?)
 2) loan issued grouped by grades
 3) # of loan issued by years
@@ -49,7 +61,7 @@ Need more in depth analyses:
    and let the mathematics of risk pooling look after us
 4) be carefull with adverse selection
 
-GOALs:
+other GOALs:
 1) Build a credit model and predict reliably default rates
 2) Predict grade
 
