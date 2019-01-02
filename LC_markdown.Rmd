@@ -1,0 +1,1022 @@
+---
+title: "Analysis of Lending Club data "
+author: Jialing
+date: Dec 29, 2018
+output: 
+  html_document: 
+    number_sections: true
+#    toc:true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(lubridate)
+library(ggplot2)
+library(plyr)
+#detach(package:plyr)  
+library(dplyr)
+
+library(tidyr)   
+library(tidyverse)
+library(stringr)
+library(caret)
+library(rpart)
+
+library(reshape2)
+library(maps)
+library(RColorBrewer)
+library(lattice)
+library(knitr)
+library(kableExtra)
+options(knitr.table.format = "html") 
+library(data.table)
+library(googleVis)
+library(stringr)
+library(tm)                 
+library(SnowballC) 
+library(Matrix)
+library(wordcloud) 
+# library(rattle)
+# library(ROSE)
+# library(ROCR)
+# library(MASS)
+# library(ipred)
+#library(ggthemes)
+# library(rpart.plot)
+```
+
+# Lending Club (LC) Introduction
+Peer to peer loans through online lending platform: 
+1). do risk assesment on borrowers, determine a credit rating and assign appropriate interest rates
+2). investors earn monthly returns. 
+LC provides an excellent machine learning case study
+
+# Goal of the project
+1. Predict int_rate (by selecting relevant features) -> how risky is the borrower?
+2. Predict loan_status -> 
+
+# Get Data
+Kaggle: https://www.kaggle.com/wendykan/lending-club-loan-data. 
+The file is a matrix of about 890 thousand observations and 75 variables (887379*75). Contain complete loan data for all loans issued through the 2007-2015, including the current loan status (Current, Late, Fully Paid, etc.) and latest payment information. 
+Features: annual_inc, int_rate, grade, subgrade, home_ownership, total_acc, loan_status, etc.
+
+```{r dataProcess, cache=TRUE}
+ loan = read.csv("loan.csv", stringsAsFactors = FALSE)
+ loan0 = loan
+```
+
+First created 2 new functions which will help (1) to treat outliers and (2) to format numbers on axes of plots. Function num_format will format large numbers to display it as comma seperated numbers. Function outlier_treatment will convert outliers to 5% and 95% interquartile range i.e. values below 5% will become 5% of interquartile range and values above 95% will become 95% of intequartile range.
+
+```{r setformat}
+num_format <- function(l) {
+#   turn in to accounting format
+  l <- format(l, scientific = F,big.mark = ",")
+#   return formatted number
+  l
+}
+
+outlier_treatment <- function(x) {
+  x[x>quantile(x,.95,na.rm = T)]<-quantile(x,.95,na.rm = T)
+  x[x<quantile(x,.05,na.rm = T)]<-quantile(x,.05,na.rm = T)
+  x
+}
+
+```
+
+# Date Preprocessing
+## Validate data (understand definition, quality check, data inconsistency)
++ data summary
+```{r data}
+# summary.default(loan0)
+# summary(loan0)
+# str(loan0)
+# dim(loan0) # 887379*74
+# head(loan0)
+# colnames(loan0),rownames(loan0)
+# unique(loan0)
+# length(loan0)
+# loan0$dti
+# https://stackoverflow.com/questions/25962942/avoid-loading-data-every-time-in-knitr
+```
+```{r data1}
+knitr::kable(as.data.frame(colnames(loan0)))%>% kable_styling() %>% scroll_box(width="200px",height = "200px")
+
+```
+
+## Clean data (missing data, invalid values, duplicate record, etc)
++ Data Cleaning
+```{r clean}
+num.NA = sort(sapply(loan0, function(x) {sum(is.na(x))}), decreasing=TRUE)
+#names(num.NA)[num.NA >0]
+```
++ Remove features with too many missing value, or remove all rows with NA if you have a lot of data: could select 80% or 51%
+```{r clean1}
+remain.col = names(num.NA)[which(num.NA <= 0.8 * dim(loan0)[1])]
+#remain.col
+loan1 = loan0 [, remain.col]
+dim(loan1)
+#names(num.NA)[(num.NA > 0.8 * dim(loan1[1]))]
+```
+```{r clean1.1}
+num.NA = sort(sapply(loan1, function(x) {sum(is.na(x))}), decreasing=TRUE)
+#num.NA[num.NA >0]
+```
++ If not missing at random, add new level to represent NA, impute with 0, or generate new feature.
+```{r clean1.2}
+# all those NA missings are from the same 29 observations
+all.equal(which(is.na(loan1$delinq_2yrs)),
+          which(is.na(loan1$inq_last_6mths)),
+          which(is.na(loan1$open_acc)), 
+          which(is.na(loan1$pub_rec)), 
+          which(is.na(loan1$total_acc)), 
+          which(is.na(loan1$acc_now_delinq)))
+# all those NA missings are from the same 70276 observations
+identical(which(is.na(loan1$tot_coll_amt)),
+          which(is.na(loan1$tot_cur_bal)), 
+          which(is.na(loan1$total_rev_hi_lim)))
+# plus, mths_since_last_major_derog, mths_since_last_delinq, revol_util, collections_12_mths_ex_med, annual_inc
+```
++ If missing at random, imputation using summary stats like mean or median, or modeling way.
+use "mean" if sensitive to outlier, use "median" if there are outliers. Or just repalce with zeros?
+```{r clean1.3}
+# boxplot(na.omit(loan1$mths_since_last_major_derog)) #  665676, median
+loan1$mths_since_last_major_derog[which(is.na(loan1$mths_since_last_major_derog))] <- median(loan1$mths_since_last_major_derog, na.rm = T)
+# boxplot(na.omit(loan1$mths_since_last_delinq)) # 454312, median
+loan1$mths_since_last_delinq[which(is.na(loan1$mths_since_last_delinq))] <- median(loan1$mths_since_last_delinq, na.rm = T)
+# boxplot(na.omit(loan1$revol_util)) # 502, median
+loan1$revol_util[which(is.na(loan1$revol_util))] <- median(loan1$revol_util, na.rm = T)
+# boxplot(na.omit(loan1$collections_12_mths_ex_med)) # 145, median
+loan1$collections_12_mths_ex_med[which(is.na(loan1$collections_12_mths_ex_med))] <- median(loan1$collections_12_mths_ex_med, na.rm = T)
+# boxplot(na.omit(loan1$annual_inc)) # 4, median
+loan1$annual_inc[which(is.na(loan1$annual_inc))] <- median(loan1$annual_inc, na.rm = T)
+```
+```{r clean1.31}
+# boxplot(na.omit(loan0$delinq_2yrs)) # 29, median/ or delete 29 observations  OR zero?
+#median(loan1$delinq_2yrs)
+loan1$delinq_2yrs[which(is.na(loan1$delinq_2yrs))] <- median(loan1$delinq_2yrs, na.rm = T) #OR zero?
+# We shall replace these NAs with 0, as it means no incidences of delinquency present in borrower’s record.
+
+# boxplot(na.omit(loan1$inq_last_6mths)) # 29, median/ or delete 29 observations
+loan1$inq_last_6mths[which(is.na(loan1$inq_last_6mths))] <- median(loan1$inq_last_6mths, na.rm = T)
+# boxplot(na.omit(loan1$open_acc)) # 29, median/ or delete 29 observations
+loan1$open_acc[which(is.na(loan1$open_acc))] <- median(loan1$open_acc, na.rm = T)
+# boxplot(na.omit(loan1$pub_rec)) # 29, median/ or delete 29 observations
+loan1$pub_rec[which(is.na(loan1$pub_rec))] <- median(loan1$pub_rec, na.rm = T)
+# boxplot(na.omit(loan1$total_acc)) # 29, median/ or delete 29 observations
+loan1$total_acc[which(is.na(loan1$total_acc))] <- median(loan1$total_acc, na.rm = T)
+# boxplot(na.omit(loan1$acc_now_delinq)) # 29, median/ or delete 29 observations
+loan1$acc_now_delinq[which(is.na(loan1$acc_now_delinq))] <- median(loan1$acc_now_delinq, na.rm = T)
+```
+```{r clean1.32}
+# boxplot(na.omit(loan1$tot_coll_amt)) # 70276, median/ or delete 70276 observations?
+loan1$tot_coll_amt[which(is.na(loan1$tot_coll_amt))] <- median(loan1$tot_coll_amt, na.rm = T)
+# boxplot(na.omit(loan1$tot_cur_bal)) # 70276, median/ or delete 70276 observations?
+loan1$tot_cur_bal[which(is.na(loan1$tot_cur_bal))] <- median(loan1$tot_cur_bal, na.rm = T)
+# boxplot(na.omit(loan1$total_rev_hi_lim)) # 70276, median/ or delete 70276 observations?
+loan1$total_rev_hi_lim[which(is.na(loan1$total_rev_hi_lim))] <- median(loan1$total_rev_hi_lim, na.rm = T)
+
+#loan1$total_acc[which(is.na(loan1$total_acc))] <- median(loan1$total_acc, na.rm = T) # 29
+loan1$delinq_2yrs[which(is.na(loan1$delinq_2yrs))] <- median(loan1$delinq_2yrs, na.rm = T)
+
+```
+
+## Data Transformation & Aggregation, etc
++
+
+# Define the Label
+Based on our goal, we need to define the label.
+
+## Predict int_rates
++
++
+
+## Predict loan_status
+Here our target/dependent variable is loan_status. Let’s check how many distinct values does it contain. loan1$loan_status: "Charged Off", "Current", "Default", "Fully paid", "In Grace Period", "Late", "Issued". It can be seen that around 10 type of loan status exist in this data set. We are only interested in 2 status i.e. Charged Off (Default) and Fully Paid. Hence, we will need to add a new variable which will be of binomial type (0s and 1s). "Charged Off": as loans that the lender has no reasonable hope of recovering money from. Different ways to determine the label: 
+
++ Remove status in between, hard to predict, thus NOT CONSIDERTION THESE LOAN
+```{r label1}
+table(loan1$loan_status)
+#knitr::kable(distinct(loan1,loan_status))
+loan1 = subset(loan1, !loan_status %in% c('Current', 'Issued')) 
+```
++ Remove all the "Late" loans, as these fall into a certain grey area with ambiguous, undetermined final statuses.
+```{r label2}
+loan1 = subset(loan1, !loan_status %in% c('In Grace Period', 'Late (16-30 days)', 'Late (31-120 days)')) 
+#table(loan1$loan_status)
+```
++ Removed all the records that did not meet credit thresholds - these loans were not endorsed by Lending Club, and so are less important for the sake of this model.
+```{r label3}
+loan1 = subset(loan1, !loan_status %in% c("Does not meet the credit policy. Status:Charged Off","Does not meet the credit policy. Status:Fully Paid"))
+```
++ Combined the “Default” loans with the “Charged Off” loans.
+```{r label4}
+loan1$loan_status = with(loan1, ifelse(loan_status == 'Default', 'Charged Off', loan1$loan_status))
+```
+
+Thus, the two final labels for classification attemps are: "Fully Paid" & "Charged Off (included "Default")
+```{r label5}
+loan_status_perc=round(table(loan1$loan_status)/dim(loan1)[1]*100, 2)
+loan_status_perc
+loan1$loan_status_binary <- with(loan1, ifelse(loan_status == 'Fully Paid', 1, 0))
+head(loan1$loan_status_binary)
+
+```
+Hence, this is very unbalanced data set, which will require some tweaking in parameters during prediction modelling. Imbalanced data: oversampling, undersampling, and synthetic data generation (either via ROSE or SMOTE approaches). This we will cover at the end of this entire analysis.
+
+#  Exploratory Data Analysis
+## Variable identification
+Different data type needs different analysis method, type of variable: predictors, response, data type: character, numeric - variable category: continuous, categorical
+
++ numeric features: histogram, boxplot, density
++ categorical features: table, sort table, barplot (term, grade, sub_grade, emp_title, emp_length, home_ownership, verificatio_status, issue_d, loan_status, pymnt_plan,url, desc, purpose, title, zip_code, addr_state, earliest_cr_line, initial_list_status, last_pymnt_d, next_pymnt_d, last_credit_pull_d,
+application_type, verification_status_joint)
+
++ univariate analysis: int_rate, loan_status, loan_amounts, ROI
++ multivariate explorations: scatter plot
+
+## Exploratory visualization (correlation matrix, scatter plot, etc), multi-collinearity (frequently asked), normality (frequently asked)
+
++ ROI: Let’s find out `Returns on Investment` of LendingClub. We will only consider ‘Charged Off (Default)’ and ‘Fully Paid’ loans.
+```{r edaa00}
+
+ROI_fully_paid=100*(sum(loan1$total_pymnt[which(loan1$loan_status_binary==1)])-sum(loan1$funded_amnt[which(loan1$loan_status_binary==1)]))/sum(loan1$funded_amnt[which(loan1$loan_status_binary==1)])
+ROI_fully_paid
+
+ROI_charged_off=100*(sum(loan1$total_pymnt[which(loan1$loan_status_binary==0)])-sum(loan1$funded_amnt[which(loan1$loan_status_binary==0)]))/sum(loan1$funded_amnt[which(loan1$loan_status_binary==0)])
+ROI_charged_off
+
+100*(sum(loan1$total_pymnt[loan1$loan_status_binary==0])-sum(loan1$funded_amnt[loan1$loan_status_binary==0]))/sum(loan1$funded_amnt[loan1$loan_status_binary==0])
+
+100*(sum(loan1$total_pymnt[loan1$loan_status_binary==1])-sum(loan1$funded_amnt[loan1$loan_status_binary==1]))/sum(loan1$funded_amnt[loan1$loan_status_binary==1])
+```
+For Fully Paid loans, it saw 14% rise in income generated from interest, charges, fees, penalties, etc. For Charged Off (Defaulted) loans, LendingClub incurred losses of 57%. 
+
+### Predict int_rate
+#### int_rate study
+```{r edaa0}
+density(loan1$int_rate)
+
+mean(loan1$int_rate)
+sd(loan1$int_rate)
+median(loan1$int_rate)
+quantile(loan1$int_rate, c(0.1, 0.25, 0.5, 0.75, 0.9))
+
+par(mfrow=c(1,3)) 
+hist(loan1$int_rate, main='Histogram')
+plot(density(loan1$int_rate), main='Density')
+boxplot(loan1$int_rate)
+# Q1 - 1.5IQR, Q1, median, Q3, Q3 + 1.5IQR, where IQR is interquartile range: Q3 - Q1
+```
+
+#### int_rate VS grade, sub_grade
+```{r edaa1}
+boxplot(int_rate ~ grade, data = loan1, xlab="grade", ylab="int_rate")
+boxplot(int_rate ~ sub_grade, data = loan1, xlab="grade", ylab="int_rate")
+        #col=topo.colors(3))
+#legend("bottomleft", inset=.02, title="Number of Cylinders",
+#       c("4","6","8"), fill=topo.colors(3), horiz=TRUE, cex=0.8)
+#sort(table(loan1$grade))
+#sort(table(loan1$sub_grade))
+
+ggplot(loan1,aes(grade,int_rate,fill=grade))+geom_violin(show.legend = T)+ facet_grid(.~loan_status)+ stat_summary(geom = "text",fun.data=function(x){return(c(y=median(x)*1.1,label=length(x)))})
+```
+As loan quality increases, interest rate decreases and large no. of loans belongs to good to medium quality loans. ‘A’ being the highest quality loan and ‘G’ being the lowest. Many outliers exist for int_rate variable, hence suitable `outlier treatment` needs to be done. We will cover this shortly in Feature Engineering section.
+
+#### int_rate VS purpose, term
+```{r edaa2}
+boxplot(int_rate ~ purpose, data = loan1)
+boxplot(int_rate ~ term, data=loan1)
+
+#sort(table(loan1$purpose))
+#sort(table(loan1$term))
+```
+
+#### int_rate VS annual_inc, grade
+```{r edaa3}
+with(loan1[1:10000, ], plot(log(annual_inc), int_rate))
+#boxplot(log(annual_inc) ~ grade,data=loan1,xlab="grade", ylab="annual_income_log")
+ggplot(loan1,aes(log(annual_inc),int_rate))+geom_point()
+```
+
+#### int_rate VS homeowership, grades
+```{r edaa4}
+barplot(sort(table(loan1$home_ownership),decreasing=TRUE))
+boxplot(int_rate ~ home_ownership,data=loan1)
+table(loan1$home_ownership, loan1$grade)
+
+c=unique(loan1$emp_length)
+
+unique(loan1$home_ownership)
+loan1$home_ownership <- ifelse(loan1$home_ownership %in% c('ANY', 'NONE', 'OTHER'), 
+                              'OTHER',loan1$home_ownership)
+table(loan1$home_ownership)
+
+emp_length_sum=table(loan1$emp_length)
+typeof(emp_length_sum)
+#table(loan1$emp_length,round(loan1$home_ownership/emp_length_sum*100,2))
+table(loan1$emp_length,loan1$home_ownership)
+#x=by(loan1, loan1$emp_length, function(x) {return(x$home_ownership/emp_length_sum)})
+#x
+emp_length_perc=round(sort(table(loan1$emp_length)) / dim(loan1)[1] * 100, 2)
+sort(emp_length_perc,decreasing = TRUE)
+
+home_ownership_perc=round(sort(table(loan1$home_ownership)) / dim(loan1)[1] * 100, 2)
+sort(home_ownership_perc,decreasing = TRUE)
+
+ggplot(loan1,aes(home_ownership,loan_amnt,fill=home_ownership))+geom_boxplot(show.legend = T)+facet_grid(.~loan_status)+ stat_summary(geom = "text",fun.data=function(x) {return(c(y=median(x)*1.1,label=length(x)))})
+
+ggplot(loan1,aes(home_ownership,loan_amnt,fill=home_ownership))+geom_boxplot(show.legend = T)+facet_grid(.~loan_status)+ stat_summary(geom = "text",fun.data=function(x) {return(c(y=quantile(x,.75)[[1]],label=length(x)))},aes(vjust="bottom"))
+
+ggplot(loan1,aes(home_ownership,int_rate,fill=home_ownership))+geom_boxplot(show.legend = T)+facet_grid(.~loan_status)+ stat_summary(geom = "text",fun.data=function(x) {return(c(y=quantile(x,.75)[[1]],label=length(x)))},aes(vjust="bottom"))
+```
+Borrowers who are on Rented or on Mortgaged homes, took most loans. Most Defaulters are on Rented homes.
+
+
+#### loan purpose (education, small business) VS grades, int_rate
+```{r edaa5}
+sort(table(loan1$purpose))
+purpose_perc=round(sort(table(loan1$purpose)) / dim(loan1)[1] * 100, 2)
+barplot(sort(purpose_perc, decreasing = TRUE))
+
+table(loan1$purpose, loan1$grade)
+
+ggplot(loan1,aes(x=purpose)) + geom_bar() + facet_grid(.~loan_status) + stat_count(geom = "text",aes(label=..count..,vjust="bottom")) + theme(axis.text.x=element_text(angle=30, vjust=.8, hjust=0.8)) 
+#+ scale_y_continuous(labels = num_format)
+```
+Most loans are taken for Credit Card and Debt Consolidation purpose and it has been defaulted most.
+
+#### int_rate VS revolving balance and employment length
+```{r edaa6}
+sort(table(loan1$emp_length))
+length(which(loan1$emp_length == "n/a")) # How to process data with "n/a"
+boxplot(int_rate ~ emp_length,data=loan1)
+boxplot(log(annual_inc) ~ emp_length,data=loan1)
+
+plot(density(loan1$revol_bal), main='Density')
+boxplot(loan1$revol_bal)
+# ggplot(loan1, aes(x=revol_bal, y=int_rate)) + geom_point(aes(color = emp_length))
+```
+#### int_rate VS number of delinquencies over the past 2 years 
+```{r edaa7}
+plot(density(loan1$delinq_2yrs), main='Density')
+boxplot(loan1$delinq_2yrs)
+ggplot(loan1, aes(x=delinq_2yrs, y=int_rate)) + geom_point(aes(color = grade))
+
+with(loan1[1:10000, ], plot(delinq_2yrs, int_rate))
+
+```
+#### correlation1
+```{r edaa8}
+summary.default(loan1)
+library(corrplot)
+correlations <- cor(loan1[, c('int_rate', 'total_acc', 'acc_now_delinq', 'annual_inc','dti', 'loan_amnt', 'open_acc','tot_coll_amt')]) 
+# possible to see NA if features has missing value
+correlations <- cor(loan1[, c('int_rate', 'total_acc', 'acc_now_delinq', 'annual_inc',
+                             'dti', 'loan_amnt', 'open_acc','tot_coll_amt')], use = "pairwise.complete.obs")
+corrplot(correlations, method = "square", tl.cex = 1, type = 'lower')
+# http://www.sthda.com/english/wiki/visualize-correlation-matrix-using-correlogram
+```
+#### correlation2
+```{r edaa9}
+library("dplyr")
+loan1.numeric = select_if(loan1, is.numeric)
+loan1.numeric = loan1.numeric[, !names(loan1.numeric) %in% c('policy_code')]
+correlations <- cor(loan1.numeric) 
+corrplot(correlations, method = "square", tl.cex = 1, type = 'lower')
+```
+```{r edaa10}
+# correlations
+colnames(loan1.numeric)
+findCorrelation(correlations, cutoff = 0.6, verbose = TRUE, names = TRUE, exact = ncol(correlations) < 100)
+```
+ 
+  variable 1      |   variable 2            |  Correlation
+----------------  | ----------------------- | -------------
+ out_prncp        | out_prncp_inv           |  1
+ id               | member_id               |  0.999
+ total_pymnt      | total_pymnt_inv         |  0.996
+ funded_amnt      | funded_amnt_inv         |  0.995
+ loan_amnt        | funded_amnt_inv         |  0.992
+ loan_amnt        | installment             |  0.955
+ total_pymnt_inv  | total_rec_prncp         |  0.972
+ installment      | total_pymnt             |  0.818
+ recoveries       | collection_recovery_fee |  0.8
+ total_rev_hi_lim | revol_bal               |  0.761
+ last_pymnt_amnt  | total_rec_prncp         |  0.757
+ total_acc        | open_acc                |  0.672      
+ 
+#### 3 different fields which indicates amount of loan applied/funded: loan_amnt, funded_amnt, funded_amnt_inv
+```{r newfeature11}
+par(mfrow=c(1,3))
+hist(loan1$loan_amnt, main='Histogram')
+hist(loan1$funded_amnt, main='Histogram')
+hist(loan1$funded_amnt_inv, main='Histogram')
+```
+Histogram of 3 fields is almost identical. It means that loan amount applied by borrower was more or less granted the same by the LendingClub.
+
+#### Grades VS Loan Amount
+```{r newfeature111}
+ggplot(loan1,aes(grade,loan_amnt,fill=grade))+geom_boxplot(show.legend = T)+facet_grid(.~loan_status)+ stat_summary(geom = "text",fun.data=function(x) {return(c(y=median(x)*1.1,label=length(x)))})
+
+```
+As loan quality degrades, people tend to buy larger loan amount.
+
+
+#### Application Type VS Funded Amount
+```{r newfeature112}
+ggplot(loan1,aes(x=application_type,y=funded_amnt))+geom_boxplot()+facet_grid(.~loan_status)+ stat_summary(geom = "text",fun.data=function(x) {return(c(y=quantile(x,.75)[[1]],label=length(x)))},aes(vjust="bottom"))
+```
+Ratio of Joint to Individual applicants is very low. Hence we will ignore application_type variable.
+
+#### number of opened and total number of accounts
+```{r edaa81}
+with(loan1[1:10000, ], plot(total_acc, open_acc))
+```
+
+#### DTI (Debt to Income ratio), the lower the better, some impact on charge off probabilities, DTI VS grades, int_rate
+```{r edaa91}
+boxplot(dti ~ grade,data=loan1)
+with(loan1[1:10000, ], plot(annual_inc, dti))
+#index = createDataPartition(y=loan1$loan_status,p=0.9)[[1]]
+#loan1.sample = loan1[-index,]
+#ggplot(loan1.sample, aes(x=int_rate, y=dti)) + geom_point(aes(color = grade))
+library(lattice)
+bwplot(dti ~ grade, data = loan1)
+```
+
+#### Public records VS rates
+```{r edaa101}
+plot(density(loan1$pub_rec),main='Density')
+with(loan1[1:10000, ], plot(int_rate, pub_rec))
+```
+
+#### Revolving utilization: higher revolving utilization means higher risk of default rates
+```{r eda12}
+index = createDataPartition(y=loan1$loan_status,p=0.9)[[1]]
+loan1.sample = loan1[-index,]
+ggplot(loan1.sample, aes(x=int_rate, y=revol_util)) + geom_point(aes(color = term))
+
+#with(loan1[1:10000, ], plot(int_rate, revol_util))
+```
+
+#### Inquiries in the last 6 months VS rates
+```{r eda13}
+plot(density(loan1$inq_last_6mths))
+with(loan1[1:10000, ], plot(int_rate, inq_last_6mths))
+
+index = createDataPartition(y=loan1$loan_status,p=0.9)[[1]]
+loan1.sample = loan1[-index,]
+ggplot(loan1.sample, aes(x=int_rate, y=inq_last_6mths)) + geom_point(aes(color = grade))
+
+```
+
+
+#### Timestamp
+```{r eda151}
+library(zoo)
+head(loan1$issue_d)
+# How to solve R problems, 
+# e.g, search Google for date MMM YYYY format in R: Date formatting MMM-YYYY - Stack Overflow
+as.yearmon(loan1$issue_d[1:5], "%b-%Y")
+as.Date(as.yearmon(loan1$issue_d[1:5], "%b-%Y"))
+loan2 = loan1
+
+loan1$issue_d_1 <- as.Date(as.yearmon(loan1$issue_d, "%b-%Y"))
+loan1$issue_year <- format(loan1$issue_d_1, '%Y')
+loan1$issue_mon <- format(loan1$issue_d_1, '%m')
+#head(loan1$issue_d_1)
+#head(loan1$issue_year)
+#head(loan1$issue_mon)
+
+#loan1$issue_d_1 <- as.Date(as.yearmon(loan1$issue_d, "%b-%Y"))
+#loan1$issue_year <- as.character(format(loan1$issue_d_1, "%Y"))
+#loan1$issue_mon <- as.character(format(loan1$issue_d_1, "%m"))
+```
+
+```{r eda15}
+# "by" function: split and groupby the data frame 
+par(mfrow=c(1,2))
+int.rate.by.time <- by(loan1, loan1$issue_d_1, function(x) {return(median(x$int_rate))}) ###!!!!important
+plot(as.Date(names(int.rate.by.time)), int.rate.by.time, type = 'p')
+
+int.rate.by.year <- by(loan1, loan1$issue_year, function(x) {return(median(x$int_rate))})
+names(int.rate.by.year)
+plot(names(int.rate.by.year), int.rate.by.year, type = 'p')
+# Not only see the median by time, but also distribution by time.
+```
+```{r eda16}
+library(lattice)
+bwplot(int_rate ~ issue_year, data = loan1)
+#plot(names(int.rate.by.year), int.rate.by.year, type = 'p')
+```
+
+#### Age of Credit history VS rates: 
+loan_issue_date, the date of the borrorwer's first credit line -> calculate the length of each borrow's credit history
+```{r newfeature2}
+library(lubridate)
+head(loan1$issue_d)
+loan1$issue_d = as.character(loan1$issue_d)
+head(loan1$issue_d)
+loan1$issue_d = paste(loan1$issue_d, "-01", sep = "")
+head(loan1$issue_d)
+loan1$issue_d = parse_date_time(loan1$issue_d, "myd")
+head(loan1$issue_d)
+```
+```{r newfeature21}
+loan1$earliest_cr_line <- as.character(loan1$earliest_cr_line)
+loan1$earliest_cr_line <- paste(loan1$earliest_cr_line, "-01", sep = "")
+loan1$earliest_cr_line <- parse_date_time(loan1$earliest_cr_line, "myd")
+head(loan1$earliest_cr_line)
+```
+```{r newfeature22}
+loan1$time_since_first_credit <- loan1$issue_d - loan1$earliest_cr_line
+head(loan1$time_since_first_credit)
+loan1$time_since_first_credit <- as.numeric(loan1$time_since_first_credit)
+head(loan1$time_since_first_credit)
+```
+
+```{r newfeature23}
+loan1 = loan1 %>% filter(time_since_first_credit > 0)
+head(loan1$time_since_first_credit)
+```
+```{r newfeature24}
+#index = createDataPartition(y=loan1$loan_status,p=0.9)[[1]]
+#loan1.sample = loan1[-index,]
+#ggplot(loan1.sample, aes(x=int_rate, y=time_since_first_credit)) + geom_point(aes(color = term))
+with(loan1[1:10000, ], plot(int_rate, time_since_first_credit))
+boxplot(loan1$time_since_first_credit/365)
+```
+
+### Predict loan_status
+#### loan_status
+```{r eda01}
+loan_status_perc=round(sort(table(loan1$loan_status)) / dim(loan1)[1] * 100, 2)
+par(mfrow=c(1,2))
+barplot(sort(table(loan1$loan_status), decreasing = TRUE))
+barplot(sort(loan_status_perc, decreasing = TRUE)) # percentage
+
+# remove certain string from loan_status
+# loan1$loan_status <- gsub('Does not meet the credit policy. Status:','', loan1$loan_status)
+sort(table(loan1$loan_status))
+```
+#### loan_status VS int_rate
+```{r eda1}
+ggplot(loan1, aes(x = int_rate))+ geom_histogram(aes(fill = loan_status), bins=20)+ facet_wrap(~loan_status, ncol = 1)
+```
+#### loan_status VS int_rate, grade
+```{r eda2}
+table(loan1$loan_status, loan1$grade)
+ggplot(loan1, aes(x = int_rate))+ geom_histogram(aes(fill = grade),bins=20) + facet_wrap(~loan_status, ncol = 1)
+ggplot(loan1,aes(grade,int_rate,fill=grade))+geom_boxplot(show.legend = T)+facet_grid(.~loan_status)+stat_summary(geom = "text",fun.data=function(x) {return(c(y=median(x)*1.1,label=length(x)))})
+```
+
+#### loan_status VS term, int_rate
+```{r eda3}
+table(loan1$loan_status, loan1$term)
+ggplot(loan1, aes(x = int_rate))+ geom_histogram(aes(fill = term),bins=20) + facet_wrap(~loan_status, ncol = 1)
+```
+#### loan_status VS loan_amnt, int_rate, term (chose to plot just 10% of the points)
+
+This one plot suggests that the 60-month loans tend to have larger interest rates and be for larger loan amounts (the top right corner is dominated by blue points).
+```{r eda4}
+index = createDataPartition(y=loan1$loan_status,p=0.9)[[1]]
+loan1.sample = loan1[-index,]
+ggplot(loan1.sample, aes(x=loan_amnt, y=int_rate)) + geom_point(aes(color = term))
+colnames(loan1)
+colnames(loan1.sample)
+ggplot(loan1,aes(term,int_rate,fill=grade))+geom_boxplot(show.legend = T)+facet_grid(.~grade)+stat_summary(geom = "text",fun.data=function(x) {return(c(y=median(x)*1.1,label=length(x)))})
+
+ggplot(loan1,aes(grade,int_rate,fill=grade))+geom_boxplot(show.legend = T)+facet_grid(.~term)+stat_summary(geom = "text",fun.data=function(x) {return(c(y=median(x)*1.1,label=length(x)))})
+```
+Major loans are taken for 36months tenure. Good quality loans belong to 36months. Medium to low quality loans are taken for 60months tenure.
+
+#### calculate how much `loss` incurred in Charged Off loans by LendingClub for each tenure.
+```{r edaa125}
+emp_vars<-c('loan_status_binary','total_pymnt','funded_amnt','term')
+loan1_select = subset(loan1[emp_vars[c(2,3,4)]], loan1$loan_status_binary==0)  
+total_pay=by(loan1_select, loan1_select$term, function(x) {return(sum(x$total_pymnt))})
+funded=by(loan1_select, loan1_select$term, function(x) {return(sum(x$funded_amnt))})
+loss.perc=(total_pay-funded)/funded*100
+loss.perc
+
+#https://stackoverflow.com/questions/21653295/dplyr-issues-when-using-group-bymultiple-variables
+library(plyr)
+detach(package:plyr)    ##NEED TO CALL if not working 
+library(dplyr)
+
+knitr::kable(
+  as.data.table(loan1[loan1$loan_status_binary==0,] 
+  %>% select(total_pymnt,funded_amnt,term) 
+  %>% group_by(term) 
+  %>% summarise(total_pay=sum(total_pymnt), funded=sum(funded_amnt)) 
+  %>% mutate(loss.perc=100*(total_pay-funded)/funded))) %>% kable_styling()
+```
+Around 60% loss incurred in case of loans with 60 months duration. Around 52% loss incurred in case of loans with 36 months duration.
+
+#### loan_status VS emp_length
+```{r edaa135}
+#ggplot(loan1, aes(emp_length))
+#loan1$emp_length
+#ggplot(loan1, aes(emp_length))+geom_bar()+facet_grid(.~loan_status)
+#ggplot(loan1,aes(emp_length))+geom_bar(position="dodge")+facet_grid(.~loan_status)+
+  theme(axis.text.x=element_text( angle=30, vjust=.8, hjust=0.8))#+ scale_y_continuous(labels = num_format)
+ggplot(loan1,aes(emp_length))+geom_bar()+facet_grid(.~loan_status)+
+  theme(axis.text.x=element_text( angle=30, vjust=.8, hjust=0.8))
+```
+Borrowers with > 10 years of employment period have took most loans and also has defaulted the most.
+
+#### annual_inc VS funded_amnt
+```{r edaa136}
+#loan1$funded_amnt
+ggplot(loan1,aes(annual_inc,funded_amnt))+geom_point()
+```
+Very High earning individuals (income 5 or 6 million) have took loan of just 10k. Astonishing result indeed.
+
+#### look at the data of HNI (High networth Individual) borrowers.
+```{r edaa1325}
+vars=c("id","emp_title","annual_inc","loan_amnt","funded_amnt","total_pymnt","int_rate","term","grade","emp_length","home_ownership","loan_status","purpose","title","addr_state")
+knitr::kable(as.data.frame(loan0[loan0$annual_inc>=5000000,]) %>% select(vars), caption="HNI Borrower Details") %>% kable_styling() #%>% scroll_box()
+knitr::kable(as.data.frame(loan1[loan1$annual_inc>=5000000,]) %>% select(vars), caption="HNI Borrower Details") %>% kable_styling() #%>% 
+```
+By looking at the data of HNI, their employment title doesn’t justify their annual income before data cleaning. For instance, borrowers like nurses & drivers are having annual income of more than 7 million.
+
+
+#### loan_status VS verification Status
+```{r edaa115}
+ggplot(loan1,aes(x=verification_status))+geom_bar()+facet_grid(.~loan_status)+stat_count(geom = "text",aes(label=..count..,vjust="bottom"))
+
+```
+Income of borrowers of 40% loans are ‘not verified’ in Charged Off and in Fully Paid case. Hence, not much of significance to predict defaulters.
+
+
+
+## Variable reduction: Principle Component Analysis (hard to interpret)
+Selecting out irrelevant data (id, url), poorly documented data (average current balance), and less important features (payment plan, home state?). 
++ Feature Reduction, remove features with unique value per row or no variance, remove redundant features.
+```{r featureeng}
+num.value <- sapply(loan1, function(x){return(length(unique(x)))})
+# num.value
+which(num.value == 1) # -> feature: policy_code
+which(num.value == dim(loan1)[1]) # -> feature: id, member_id, url
+
+delete.col=c("policy_code","id", "member_id","url")
+typeof(delete.col)
+loan1 = loan1 [, !(names(loan1) %in% delete.col)]
+dim(loan1)
+```
+
+## Variable Creation (Feature Engineering, Good features are usually more important than fancy models). 
+We shall create new variables aka features which will help us to gain more insights from data. These features might become useful as new predictors for our model. Let’s hop on to create some new variables/features which can tell us more stories from this huge data set. Then we shall do some uni/multi variate analysis on this new set of features.
+
+### Several features of the data set were inherently related:
+
+ variable 1       |   variable 2            |  Correlation
+----------------- | ----------------------- | -------------
+ out_prncp        | out_prncp_inv           |  1
+ id               | member_id               |  0.999
+ total_pymnt      | total_pymnt_inv         |  0.996
+ funded_amnt      | funded_amnt_inv         |  0.995
+ loan_amnt        | funded_amnt_inv         |  0.992
+ loan_amnt        | installment             |  0.955
+ total_pymnt_inv  | total_rec_prncp         |  0.972
+ installment      | total_pymnt             |  0.818
+ recoveries       | collection_recovery_fee |  0.8
+ total_rev_hi_lim | revol_bal               |  0.761
+ last_pymnt_amnt  | total_rec_prncp         |  0.757
+ total_acc        | open_acc                |  0.672      
+ 
+### open_acc, total_acc -> create a feature: current_account_ratio (open_acc divided by total_acc)
+```{r newfeature1}
+# head(loan1$open_acc)
+# head(loan1$total_acc)
+loan1$current_account_ratio=loan1$open_acc/loan1$total_acc
+# current_account_ratio
+```
+
+### loan_issue_date -> fix to standard R format. 
+Since only month and year is given, we will safely assume it to be the 1st day of the month for our analysis.
+```{r newfeature311}
+library(lubridate)
+#last_pamnt_d_1=parse_date_time(last_pamnt_d_1,"myd")
+#head(last_pamnt_d_1)
+
+loan0<-loan0 %>%mutate(issue_dt= as.Date(paste('01',issue_d,sep = "-"),'%d-%b-%Y'))
+#head(loan0$issue_dt)
+loan0<-loan0 %>%mutate(last_pamnt_d_2= as.Date(paste('01',last_pymnt_d,sep = "-"),'%d-%b-%Y'))
+#head(loan0$last_pamnt_d_2)
+loan3<-as.data.table(loan0)
+#head(loan3$last_pamnt_d_2)
+```
+Since last payment date will not be of much significance for our analysis/ modelling, we will not using this variable further. We will focus more on issue_dt variable.
+
+### Time-series analysis using Issue Date
+```{r newfeature30}
+#detach(package:plyr)    
+#library(dplyr)
+loan1 %>% select(grade,issue_d_1,int_rate) %>%group_by(grade,issue_d_1)%>% summarise(int_rate_mean=mean(int_rate))%>% ggplot(aes(issue_d_1))+ geom_line(aes(y=int_rate_mean),color="violet",size=1)+ ylab("Average Interest rate")+ xlab("Issue date")+facet_wrap(~grade)
+#x=select(loan1, grade,issue_d_1,int_rate)
+#y =group_by(x, issue_d_1, grade)
+#summarise(y, int_rate_mean=mean(int_rate))
+```
+It can be observed from above plots that average interest rate for `good quality loans` has `remained almost stable during 10 years`. However, for low quality loans, the average interest rate has increased by 2x.
+
+### stability of interest rate seems to be strong point for good quality loans
+```{r newfeature320}
+#detach(package:plyr)    
+#library(dplyr)
+#sum(!loan1$loan_status_binary)
+#length(loan1$loan_status_binary)-sum(loan1$loan_status_binary)
+#as.character(loan1$loan_status_binary)
+#sum(as.numeric(as.character(loan1$loan_status_binary)))
+loan1 %>% filter(loan_status_binary==0) %>% select(grade, issue_d_1,loan_status_binary) %>%
+  group_by(grade, issue_d_1) %>% summarise(defalters=sum(!loan_status_binary)) %>%
+  ggplot(aes(issue_d_1))+geom_line(aes(y=defalters),color="darkblue",size=1)+ ylab("No. of Defaulters")+ xlab("Issue date")+
+  facet_wrap(~grade)
+```
+Here we observe that no. of defaulters has increased sharply in the year 2014-2015.
+
+```{r newfeature321}
+loan1 %>% filter(loan_status_binary==0) %>% select(grade, issue_d_1,loan_status_binary) %>%
+  group_by(grade, issue_d_1) %>% summarise(defalters=sum(!loan_status_binary)) %>%
+  ggplot(aes(issue_d_1))+geom_line(aes(y=log(defalters,base=10)),color="darkblue",size=1)+ ylab("No. of Defaulters")+ xlab("Issue date")+facet_wrap(~grade)
+```
+Here we observe the no. of defaulters for good & medium quality loans has increased sharply in past 10 years compared to low quality loans. Here I have used log transformation on no. of defaulters (y-axis) to bring out the right visualization.
+
+
+```{r newfeature322}
+#unique(loan1$loan_status_binary)
+#as.numeric(as.character(loan1$loan_status_binary))
+loan1 %>% select(grade,loan_status_binary,issue_d_1,funded_amnt) %>%group_by(grade,loan_status_binary,issue_d_1)%>%summarise(funded_amount=mean(funded_amnt,na.rm=T))%>%ggplot(aes(issue_d_1))+geom_line(aes(y=funded_amount,color=loan_status_binary),size=1)+ylab("Funded Amount")+ xlab("Issue date")+facet_wrap(~grade)
+```
+Here we see that funded amount has increased in past 10 years. For good quality variation in amount is narrower, but for low quality loans variation is very high. Also, for low quality loans average funded amount has increased by 3x in past 10 years. Defaulted and non-defaulted borrowers shows same behaviour.
+
+### DTI
+A ratio calculated using the borrower’s total monthly debt payments on the total debt obligations, excluding mortgage and the requested LC loan, divided by the borrower’s self-reported monthly income. (debt divided by income)
+```{r newfeature32}
+#min(loan1$dti)
+#boxplot(loan1$dti)
+loan1<-as.data.table(loan1
+                     %>%mutate(
+  dti_range_100=as.factor(case_when(
+  dti>=0 & dti<=10 ~ "dti_0-10",
+  dti>10 & dti<=20 ~ "dti_10-20",
+  dti>20 & dti<=30 ~ "dti_20-30",
+  dti>30 & dti<=40 ~ "dti_30-40",
+  dti>40 & dti<=50 ~ "dti_40-50",
+  dti>50 & dti<=60 ~ "dti_50-60",
+  dti>60 & dti<=70 ~ "dti_60-70",
+  dti>70 & dti<=80 ~ "dti_70-80",
+  dti>80 & dti<=90 ~ "dti_80-90",
+  dti>90 & dti<=100 ~ "dti_90-100",
+  dti>100 ~ "dti_100"))
+  )
+  )
+table(loan1$dti_range_100)
+#unique(loan1$dti_range_100)
+
+ggplot(loan1, aes(dti_range_100))+geom_bar(aes(y=log(..count..)))+
+  facet_grid(.~loan_status)+theme(axis.text.x=element_text( angle=30, vjust=.8, hjust=0.8))+
+  ylab("No. of Defaulters log-transformed")+ xlab("DTI")
+```
+Individuals with high DTI tends to default less than the one with lower DTI, suprising isn’t it?
+
+### Incidences of delinquency
+the number of 30+ days past-due incidences of delinquency in the borrower’s credit file for the past 2 years.
+```{r newfeature33}
+#loan1$delinq_2yrs
+#ggplot(loan1,aes(delinq_2yrs))+geom_bar(aes(y=log(..count..)))+facet_grid(.~loan_status)
+#+theme(axis.text.x=element_text( angle=30, vjust=.8, hjust=0.8))
+ggplot(loan1,aes(delinq_2yrs))+geom_bar(aes(y=log(..count..)))+facet_grid(.~loan_status)
+```
+Only Fully Paid (non-defaulters) have more than 15 delinquency incidents in their records. This is quite astonishing because those who committed highest incidences of delinquencies are non-defaulters.
+
+### Numeric Variables
+There are many numeric variables in data set. Not all are useful to predict if loan will be Charged Off/defaulted. Hence we will only consider those variables which shows `different patterns` in case of defaulters and non-defaulters. Before this we shall `do outlier treatment` for this variables `as outlier has cascading impacts` in ML algorithms. We will use our own function craeted earlier in this topic to treat outliers.
+```{r newfeature34}
+numeric_vars<-loan1%>%sapply(is.numeric)%>%which()%>%names()
+#numeric_vars
+#Remove variables which should not be treated like factor kind of variables
+numeric_vars<-setdiff(numeric_vars,c("id","member_id","policy_code","dti","delinq_2yrs"))
+numeric_vars
+#outlier treatment for numeric variables
+library(plyr)
+#detach(package:plyr)    
+library(dplyr)
+loan_num_vars<-as.data.table(loan1%>%select(numeric_vars)%>%mutate_all(.funs = outlier_treatment)%>%gather(measure,values))
+head(loan_num_vars)
+```
+### numeric variables density plot (Important Findings)
+```{r newfeature340}
+unique(numeric_vars)
+ggplot(loan1, aes(x=int_rate))+geom_density()+facet_grid(.~loan_status_binary)#+geom_vline(aes(xintercept=mean(mths_since_last_major_derog)),color="blue", linetype="dashed", size=1)
+ggplot(loan1, aes(x=int_rate)) + geom_histogram(aes(y=..density..), bins=30, alpha=0.5, 
+                position="identity")+ geom_density(alpha=.2) +facet_grid(.~loan_status_binary)
+
+ggplot(loan1, aes(x=int_rate,fill=!loan_status_binary,color=!loan_status_binary)) + geom_histogram(aes(y=..density..), bins=30, alpha=0.5, 
+                position="identity")+ geom_density(alpha=.2) +facet_grid(.~loan_status_binary)
+```
+`I have plotted density plots for each of numeric variables for defaulters and non-defaulters. 
+All plots are similiar except for variable int_rate (interest rate).` No. of defaulters increases as interest rate increases.
+
+```{r newfeature341}
+library(plyr)
+detach(package:plyr)    
+library(dplyr)
+
+loan_num_vars[measure==numeric_vars[17]]%>%mutate(defaulted=!loan1$loan_status_binary)%>%
+  ggplot(aes(x=values,fill=defaulted,color=defaulted))+
+  geom_density(alpha=0.3)+xlab("Interest Rate")
+```
+
+### US States vs. loan_staus
+this part needs more practice.
+We need to analyse if borrower address has relation with no. of defaulters. We will use `Google Visualization’s Maps feature` to see no. of defaulters for each states. Since this requires state codes to be in `ISO format`, so `state codes` should be converted into the form ‘US-XX’ where XX is state code. To have proper names of state against their state codes, I have imported each US state code ISO format with their actual state name from Wikipedia into CSV format. This is available in Data section of Kernel as `‘us-state-codes.csv’`.
+```{r newfeature35}
+#detach(package:plyr)    
+#library(dplyr)
+loan1$state_code=paste("US",toupper(loan1$addr_state),sep="-")
+#head(loan1$state_code)
+us_state_code = read.csv("us-state-codes.csv", stringsAsFactors = FALSE,header=T)
+head(us_state_code)
+setdiff(loan1$state_code,us_state_code$state_code) #check diff
+```
+```{r newfeature36}
+#library(plyr)
+#detach(package:plyr)    
+#library(dplyr)
+defaulters_in_US<-sum(ifelse(loan1$loan_status_binary==0,1,0)) #Total no. of defaulters in US
+
+state_defaulters<-loan1%>%
+  left_join(y=us_state_code,by="state_code")%>%
+  select(state_code,loan_status_binary,state) %>%
+  group_by(state_code,state)%>%
+  summarise(defaulters=sum(ifelse(loan_status_binary==0,1,0)),
+            defaulter_perc_within_US=round(100*sum(ifelse(loan_status_binary==0,1,0))/defaulters_in_US,2))
+```
+```{r newfeature360}
+head(state_defaulters)
+state_defaulters1<-state_defaulters %>% mutate(name=gsub(pattern = "US-",replacement = "",x = state_code))
+head(state_defaulters1)
+state_defaulters2<-state_defaulters1 %>% mutate(map_hover_string=paste(state,defaulters,sep = "- Defaulters:"))
+head(state_defaulters2)
+state_defaulters3<-as.data.table(state_defaulters2)
+head(state_defaulters3)
+```
+### plot on Maps
+```{r newfeature37}
+#library(plyr)
+#detach(package:plyr)    
+#library(dplyr)
+myColourAxis2 <- paste('{colors: [\'#ff9999\',\'#e60000\']}') 
+
+Geostates<-gvisGeoChart(state_defaulters3,
+                        locationvar = "state_code",
+                        colorvar = "defaulter_perc_within_US",
+                        hovervar = "map_hover_string",
+                        options = list(region="US",
+                          displayMode="region",
+                          resolution="provinces",
+                          defaultColor="red",
+                          backgroundColor="66c2ff",
+                          colorAxis=myColourAxis2))
+
+#print(Geostates,'chart')
+#htmltools::includeHTML("LC_markdown_0101.html") #HTML generated from above plot is embedded as HTML file
+```
+It is clearly seen that state of California tops the chart for highest no. of defaulters. It is then followed by states like New York, Florida and Texas.
+
+### find which type of loans are defaulted highest in the above states
+``````{r newfeature371}
+library(plyr)
+detach(package:plyr)    
+library(dplyr)
+loan1 %>% filter(state_code %in% c("US-NY","US-CA","US-TX","US-FL")) %>% 
+  select(state_code, loan_status_binary,grade)%>%
+  group_by(state_code,grade)%>%
+  summarise(defaulters=sum(!loan_status_binary))%>%
+  arrange(state_code,desc(defaulters))%>%
+  ggplot(aes(grade,defaulters))+geom_bar(stat="identity")+facet_wrap(~state_code)
+```
+Loans of type C,B and D are most defaulted in highest defaulter states of CA,NY,FL and TX.
+
+## Text Mining on loan description field
+We can do `text mining` to find the words which are most used by borrowers while applying for loan. We do this for defaulters and for non-defaulters. Further we can do `sentiment analysis` on the same but here we will not go at a such depth and will just try to `find the most used words`. 
+
+Text mining works in below fashion.
+(1).Remove punctuations, numbers, whitespaces, stop words (words which are used most in sentence but doesn’t give any significant value like ‘the’,‘an’,‘is’, etc) from description field. (2).Calculate frequency of each word in sentence and then in complete data set. (3).Highest frequency i.e. most used words are highlighted and enlarged in the center of WordCloud.
+
+We have used 2 different ways to create a WordCloud, one for defaulters and one for non-defaulters. 
+### First let’s clean the `description field` desc.
+```{r newfeature38}
+#loan1$desc
+loan1<-as.data.table(loan1%>% mutate(cleaned_desc=gsub(pattern = "Borrower added on ",replacement = "",x = desc)))
+loan1[,cleaned_desc:=gsub(pattern = "<br>",replacement = "",x = cleaned_desc)]
+loan1[,cleaned_desc:=gsub(pattern = "[^0-9A-Za-z ]",replacement = "",x = cleaned_desc)]
+head(loan1$cleaned_desc)
+head(loan1$desc)
+```
+
+### create a WordCloud to find most used words by defaulters.
+```{r newfeature380}
+#get Defaulter's cleaned_desc into normal variable
+description<-as.character(loan1[loan_status_binary==0,cleaned_desc])
+#create corpus from this variable
+corpus = Corpus(VectorSource(description))
+#pre-process this corpus by applying various transformations
+corpus = tm_map(corpus, removePunctuation)
+corpus = tm_map(corpus, content_transformer(tolower))
+corpus = tm_map(corpus, removeNumbers)
+corpus = tm_map(corpus, stripWhitespace)
+corpus = tm_map(corpus, removeWords, stopwords('english'))
+corpus = tm_map(corpus, stemDocument)
+
+doc.matrix = DocumentTermMatrix(VCorpus(VectorSource(corpus)))
+
+mat <- sparseMatrix(i=doc.matrix$i, j=doc.matrix$j, x=doc.matrix$v,
+                    dims=c(doc.matrix$nrow, doc.matrix$ncol),
+                    dimnames = doc.matrix$dimnames)
+
+freq_defaulters <- colSums(mat)
+
+frequency.defaulters<-data.table(words=names(freq_defaulters),freq=freq_defaulters)
+
+wordcloud(frequency.defaulters$words,frequency.defaulters$freq,min.freq = 1000,random.order = F,colors = brewer.pal(8,"Dark2"))
+```
+
+### create a WordCloud to find most used words by non-defaulters. 
+We will use an alternate and a simpler method to achieve this.
+```{r newfeature381}
+#get Non-Defaulter's cleaned_desc into normal variable
+description.nd<-data.table(loan1[loan_status_binary==1,cleaned_desc])
+#create corpus from this variable
+corpus.nd = Corpus(VectorSource(description.nd$V1))
+#pre-process this corpus by applying various transformations
+corpus.nd = tm_map(corpus.nd, removePunctuation)
+corpus.nd = tm_map(corpus.nd, content_transformer(tolower))
+corpus.nd = tm_map(corpus.nd, removeNumbers)
+corpus.nd = tm_map(corpus.nd, stripWhitespace)
+corpus.nd = tm_map(corpus.nd, removeWords, stopwords('english'))
+corpus.nd = tm_map(corpus.nd, stemDocument)
+
+#directly use corpus in wordcloud
+wordcloud(corpus.nd,min.freq = 10000,random.order = F,colors = brewer.pal(8,"Dark2"))
+```
+*Words like credit card, debt consolid, pay, loan are most used for both the default and non-defualt cases. Hence, not much of significance.*
+
+### Skewed variable 
+hard for prediction transfer to log (natural log of the annual income of the borrower), such as: annual_inc 
+```{r edaa31}
+min(loan1$annual_inc)
+mean(loan1$annual_inc)
+sd(loan1$annual_inc)
+median(loan1$annual_inc)
+quantile(loan1$annual_inc, c(0.1, 0.25, 0.5, 0.75, 0.9))
+which(loan1$annual_inc == 0)
+loan1$annual_inc[ which(loan1$annual_inc == 0)]
+
+plot(density(loan1$annual_inc))
+
+par(mfrow=c(1,2))
+plot(density(log10(loan1$annual_inc)))
+plot(density(log(loan1$annual_inc)))
+boxplot(loan1$annual_inc)
+
+loan1$annual_inc_log=log(loan1$annual_inc+1)
+loan1$annual_inc_log10=log10(loan1$annual_inc+1)
+quantile(loan1$annual_inc_log10, c(0.1, 0.25, 0.5, 0.75, 0.9))
+
+par(mfrow=c(1,2))
+boxplot(loan1$annual_inc_log)
+boxplot(loan1$annual_inc_log10)
+```
+
+# Build Model
+Split data into training and testing sets, and began with simple model.
+```{r split}
+#index = createDataPartition(y = loan0$loan_status, p = 0.8)[[1]]
+#loan0.test = loan0[-index,]
+#loan0.train = loan0[index,]
+#loan0.rpart.0 = rpart(loan_status ~ ., data = loan0.train)
+```
+```{r split1}
+#set.seed(1)
+#train.ind <- sample(1:dim(loan1)[1], 0.7 * dim(loan1)[1])
+#train <- loan1[train.ind, ]
+#dim(train)
+#test <- loan1[-train.ind, ]
+#dim(train)
+```
+
+## Logistic Regression
+
+## Decision Trees
+
+## Bagging
+
+Techniques used with imbalanced classification problems.
+
+Build an ensemble model using two methods: blending and stacking, which most likely gives us a boost in performance. 
+
+
+
+
