@@ -1,0 +1,270 @@
+---
+title: "LC_default prediction"
+author: Jialing
+date: Jan 18, 2018
+output: 
+  html_document: 
+    number_sections: true
+    #toc:true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## data # 133889*151
+```{r lc}
+setwd("~/Desktop/MOOC/R/lending club")
+loan = read.csv("LoanStats_securev1_2016Q1.csv", stringsAsFactors = FALSE, skip=1, header=TRUE)
+loan0 = loan
+```
+## EDA
+```{r eda}
+head(loan)
+str(loan)
+summary(loan)
+colnames(loan)
+```
+
+### missing Data: numeric(NA), character ("")
+```{r eda1}
+#summary.default(loan)
+head(loan[,c("issue_d",'last_pymnt_d','next_pymnt_d')])
+num.na=sort(sapply(loan, function(x) {sum(is.na(x))/dim(loan)[1]}),decreasing=TRUE)
+num.na
+num.NA1 = sort(sapply(loan, function(x) {length(which(x==""))}), decreasing=TRUE)
+num.NA1
+```
+### Character null data not showing
+```{r eda3}
+head(loan[, c("issue_d","last_pymnt_d","next_pymnt_d")])
+summary.default(loan)
+length(which(loan$next_pymnt_d==""))
+#loan$term
+# please check the last two rows/observations (133888, 133889), these two obseravations are missing
+```
+
+```{r eda2}
+library(VIM)
+aggr_plot <- aggr(loan,col=c('white','red'), numbers=TRUE, sortVars=TRUE, labels=names(loan), cex.axis=.7,gap=3,ylab=c("Histogram of missing data","Pattern"))
+
+#aggr_plot <- aggr(loan,col=c('navyblue','red'), labels=names(loan), cex.axis=.7,ylab=c("Histogram of missing data","Pattern"))
+```
+```{r lib}
+# library zoo for time date 
+library(zoo)
+loan[,c("loan_status","next_pymnt_d")]
+table(loan$loan_status)
+loan$next_pymnt_d[1]
+```
+
+### Timestamp character
+```{r eda30}
+dim(subset(loan,next_pymnt_d==""))
+#length(which(loan$next_pymnt_d==""))
+with(subset(loan, next_pymnt_d==""),table(loan_status))
+# Charged Off违约， 一直没有pay
+```
+
+delete loan_status=""
+```{r eda4}
+loan[which(loan$loan_status==""),]
+loan=loan[-which(loan$loan_status==""),]
+#subset(loan,loan_status=="")
+#loan=subset(loan,loan_status!="")
+```
+###not considering those observations that 'next_pymnt_d'&'last_pymnt_d' are null
+these loans will directly lead to "Charged Off or Default" status
+```{r eda5}
+with(subset(loan, last_pymnt_d==""),table(loan_status))
+#charged off违约, loan很早以前就停止payment了, past due
+#subset(loan, next_pymnt_d !=""&last_pymnt_d !="")
+table(subset(loan, next_pymnt_d !=""&last_pymnt_d !="")$loan_status)
+```
+### Life Cycle
+considering date difference (loan 'life cycle') instead of considering the date absolute value itself
+```{r eda6}
+head(loan$issue_d)
+loan$issue_d_1=as.Date(as.yearmon(loan$issue_d,"%b-%Y"))
+#loan$issue_d_1
+loan$last_pymnt_d_1=as.Date(as.yearmon(loan$last_pymnt_d,"%b-%Y"))
+loan$last_pymnt_from_issue=with(loan, last_pymnt_d_1-issue_d_1)
+```
+```{r eda7}
+#loan$last_pymnt_from_issue
+#plot(density(loan$last_pymnt_from_issue))
+#typeof(loan$last_pymnt_from_issue)
+table(subset(loan, last_pymnt_from_issue==0)$loan_status)
+#table(loan$last_pymnt_from_issue)
+```
+Hard to know whether there is a linear relationship between last_pymnt_from_issue and loan_status, thus we will:
+categorize/grouping/clustering "last_pymnt_from_issue":
+0-3months: level one
+4-6months: 
+7-12months:
+tradeoff: partition into more smaller groups (more levels, more features), or loss some information of the groups
+```{r eda8}
+#loan1$state_mean_int <-
+#  ifelse(loan1$addr_state %in% names(int_state)[which(int_state <= quantile(int_state, 0.25))], #         'low', ifelse(loan1$addr_state %in% names(int_state)[which(int_state <= quantile(int_state, 0.5))],
+#                       'lowmedium', ifelse(loan1$addr_state %in% names(int_state)[which(int_state <= quantile(int_state, 0.75))], 
+#                                           'mediumhigh', 'high')))
+#sort(table(loan1$state_mean_int))
+
+loan$last_pymnt_from_issue_cat=with(loan,as.character(cut(as.numeric(last_pymnt_from_issue),c(-1,0,92,184,366,549,639,730))))
+```
+```{r eda9}
+table(loan$last_pymnt_from_issue_cat)
+sum(table(loan$last_pymnt_from_issue_cat))
+sum(is.na(loan$last_pymnt_from_issue))
+```
+### manipulate cat missing value
+```{r eda10}
+loan$last_pymnt_from_issue[which(is.na(loan$last_pymnt_from_issue))]=0
+loan$last_pymnt_from_issue_cat[which(is.na(loan$last_pymnt_from_issue_cat))]="no pymnt"
+```
+```{r eda11}
+table(loan$last_pymnt_from_issue_cat)
+```
+```{r eda12}
+by.pymnt.gap=with(loan, table(loan_status,last_pymnt_from_issue_cat))
+by.pymnt.gap
+```
+```{r eda13}
+by.pymnt.gap=by.pymnt.gap[c("Charged Off","Default","Late (31-120 days)", "Late (16-30 days)", "In Grace Period","Current","Fully Paid"),c("(-1,0]","(0,92]","(92,184]","(184,366]","(366,549]","(549,639]","(639,730]")]
+by.pymnt.gap
+```
+piecewise linear
+
+```{r eda14}
+round(by.pymnt.gap*100/apply(by.pymnt.gap,1,sum),3)
+```
+## logistic model test
+```{r ml}
+loan$loan_status_binary=as.factor(ifelse(loan$loan_status %in% c("Current","Fully Paid"), "okay","past due"))
+```
+```{r ml1}
+mod1=glm(loan_status_binary~last_pymnt_from_issue_cat,loan,family="binomial")
+mod2=glm(loan_status_binary~last_pymnt_from_issue,loan,family="binomial")
+summary(mod1)
+summary(mod2)
+```
+
+# why the result is weird from mod1?
+# this is complete or more accurately quasi complete separatable data.
+# MLE for logistic regression doesn't exist in the case of complete or more accurately quasi.
+# https://stats.stackexchange.com/questions/224863/understanding-complete-separation-for-logistic-regression/224864#224864
+
+```{r ml2}
+with(subset(loan,last_pymnt_from_issue_cat =='(-1,0]'),table(loan_status_binary))
+```
+
+# Let's start with feature processing.
+```{r fe1}
+#check Date columns, try string function, "issue_d", ""
+str(loan)
+date.cols=colnames(loan)[c(which(grepl("_d$",colnames(loan))),which(grepl("_date$",colnames(loan))))]
+```
+```{r fe2}
+for(col_i in date.cols) {
+  loan[,col_i]=as.Date(as.yearmon(loan[,col_i],'%b-%Y'))
+}
+```
+```{r fe3}
+str(loan)
+```
+```{r fe4}
+date.cols
+sort(table(loan$last_pymnt_d),decreasing = TRUE)
+```
+
+compare with issue_date, or current_date: random set, e.g. '2017-11-1'
+```{r fe5}
+loan$mths_since_last_credit_pull=as.integer(as.Date('2017-11-1')-loan$last_credit_pull_d)
+summary(loan$mths_since_last_credit_pull)
+```
+```{r fe6}
+head(subset(loan,mths_since_last_credit_pull==0)$last_credit_pull_d)
+```
+```{r fe7}
+loan$mths_since_last_credit_pull[which(is.na(loan$mths_since_last_credit_pull))]=0
+```
+
+## Interview考function achieve cross validation
+### create/define a function
+```{r fe8}
+TransformToLengthFromIssueDate = function(loan,col.name, new.col.name,other.level) {
+  tmp=as.integer(loan[,col.name]-loan$issue_d)/30
+  loan[,new.col.name]=ifelse(is.na(loan[,col.name]),other.level,
+                          as.character(cut(tmp,c(min(tmp,na.rm=TRUE)-1,quantile(tmp,c(0.1,0.5,0.9),na.rm=TRUE),max(tmp,na.rm=TRUE)+1))))
+  return(loan)
+}
+```
+```{r fe9}
+loan=TransformToLengthFromIssueDate(loan,'hardship_start_date','hardship_since_issue','no_hs')
+loan=TransformToLengthFromIssueDate(loan,'settlement_date','settlement_since_issue','no_settle')
+```
+
+```{r fe10}
+date.cols
+zz=as.data.frame(date.cols)
+loanq=loan[,-c(zz[[1]])]
+#loan=loan[,-which(colnames(loan) %in% date.cols)]
+```
+
+```{r fe11}
+num.value=sapply(loan,function(x){return(length(unique(x)))})
+num.value
+```
+
+character
+```{r fe12}
+
+feature.w.many.levels=colnames(loan)[intersect(which(sapply(loan,function(x){return(is.character(x))})),which(num.value>=50))]
+```
+
+```{r fe13}
+#head(loan$int_rate)
+#loan$int_rate=as.numeric(sapply(strsplit(loan$int,"%"),'[',1))
+#head(loan$int_rate)
+#typeof(loan$int_rate)
+```
+
+"[" extrac element
+```{r fe14}
+loanq$int_rate=as.numeric(sapply(strsplit(loanq$int,"%"),'[',1))
+loanq$revol_util <- as.numeric(sapply(strsplit(loanq$revol_util, '%'), '[', 1))
+#typeof(as.numeric(sapply(strsplit(loan$revol_util,"%"),"[",1)))
+```
+
+### 1. select top 10 titles, see how much it covers, and "others""; 2. or use NLP extract information
+```{r fe15}
+#table(loan$emp_title)
+sum(with(loan,emp_title==""))
+sort(table(loan$emp_title),decreasing=TRUE)
+```
+
+```{r fe16}
+str(loan)
+```
+
+missing value
+```{r fe17}
+num.NA=sort(sapply(loan, function(x){sum(is.na(x))}), decreasing=TRUE)
+num.NA[1:20]
+```
+
+```{r fe18}
+num.empty <- sapply(loan[, colnames(loan)[which(sapply(loan, function(x){return(is.character(x))}))]],
+                    function(x){return(length(which(x == "")))})
+num.empty[which(num.empty > 0)]
+num.empty
+```
+```{r fe19}
+str(loan0)
+```
+```{r fe20}
+```
+```{r fe21}
+```
+```{r fe22}
+```
